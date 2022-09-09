@@ -17,7 +17,11 @@ import torch.backends.cudnn as cudnn
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[0]  # yolov5 strongsort root directory
 WEIGHTS = ROOT / 'weights'
-
+countDown = 0
+countUp = 0
+data = {}
+ids = []
+y = []
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # add ROOT to PATH
 if str(ROOT / 'yolov5') not in sys.path:
@@ -56,7 +60,7 @@ def run(
         save_crop=False,  # save cropped prediction boxes
         save_vid=False,  # save confidences in --save-txt labels
         nosave=False,  # do not save images/videos
-        classes=None,  # filter by class: --class 0, or --class 0 2 3
+        classes=0,  # filter by class: --class 0, or --class 0 2 3
         agnostic_nms=False,  # class-agnostic NMS
         augment=False,  # augmented inference
         visualize=False,  # visualize features
@@ -188,6 +192,7 @@ def run(
             imc = im0.copy() if save_crop else im0  # for save_crop
 
             annotator = Annotator(im0, line_width=2, pil=not ascii)
+            w, h = im0.shape[1], im0.shape[0]
             if cfg.STRONGSORT.ECC:  # camera motion compensation
                 strongsort_list[i].tracker.camera_update(prev_frames[i], curr_frames[i])
 
@@ -213,10 +218,12 @@ def run(
                 # draw boxes for visualization
                 if len(outputs[i]) > 0:
                     for j, (output, conf) in enumerate(zip(outputs[i], confs)):
-    
                         bboxes = output[0:4]
                         id = output[4]
                         cls = output[5]
+                        center = output[6]
+                        #count
+                        count_obj(bboxes, w, h, id, center)
 
                         if save_txt:
                             # to MOT format
@@ -239,15 +246,29 @@ def run(
                                 txt_file_name = txt_file_name if (isinstance(path, list) and len(path) > 1) else ''
                                 save_one_box(bboxes, imc, file=save_dir / 'crops' / txt_file_name / names[c] / f'{id}' / f'{p.stem}.jpg', BGR=True)
 
-                LOGGER.info(f'{s}Done. YOLO:({t3 - t2:.3f}s), StrongSORT:({t5 - t4:.3f}s)')
+                # LOGGER.info(f'{s}Done. YOLO:({t3 - t2:.3f}s), StrongSORT:({t5 - t4:.3f}s)')
 
             else:
                 strongsort_list[i].increment_ages()
-                LOGGER.info('No detections')
+                # LOGGER.info('No detections')
 
             # Stream results
             im0 = annotator.result()
             if show_vid:
+                global countDown
+                global countUp
+                color = (0,255,0)
+                start_point = (0, h // 5)
+                end_point = (w, h // 5)
+                cv2.line(im0, start_point, end_point, color = (0,255,0), thickness = 2)
+                thickness = 3
+                org = (30, 150)
+                org2 = (270, 150)
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                fontScale = 1
+                cv2.putText(im0, "Entran: "+ str(countDown), org, font, fontScale, color, thickness, cv2.LINE_AA)
+                cv2.putText(im0, "Salen: " + str(countUp), org2, font, fontScale, color, thickness, cv2.LINE_AA)
+                cv2.line(im0, (0, h - h // 5), (w, h - h // 5), color = (0,255,0), thickness = 2)
                 cv2.imshow(str(p), im0)
                 cv2.waitKey(1)  # 1 millisecond
 
@@ -284,13 +305,13 @@ def parse_opt():
     parser.add_argument('--yolo-weights', nargs='+', type=Path, default=WEIGHTS / 'yolov5m.pt', help='model.pt path(s)')
     parser.add_argument('--strong-sort-weights', type=Path, default=WEIGHTS / 'osnet_x0_25_msmt17.pt')
     parser.add_argument('--config-strongsort', type=str, default='strong_sort/configs/strong_sort.yaml')
-    parser.add_argument('--source', type=str, default='0', help='file/dir/URL/glob, 0 for webcam')  
+    parser.add_argument('--source', type=str, default='videos/example_03.avi', help='file/dir/URL/glob, 0 for webcam')  
     parser.add_argument('--imgsz', '--img', '--img-size', nargs='+', type=int, default=[640], help='inference size h,w')
     parser.add_argument('--conf-thres', type=float, default=0.5, help='confidence threshold')
     parser.add_argument('--iou-thres', type=float, default=0.5, help='NMS IoU threshold')
     parser.add_argument('--max-det', type=int, default=1000, help='maximum detections per image')
-    parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
-    parser.add_argument('--show-vid', action='store_true', help='display tracking video results')
+    parser.add_argument('--device', default=0, help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
+    parser.add_argument('--show-vid', action='store_false', help='display tracking video results')
     parser.add_argument('--save-txt', action='store_true', help='save results to *.txt')
     parser.add_argument('--save-conf', action='store_true', help='save confidences in --save-txt labels')
     parser.add_argument('--save-crop', action='store_true', help='save cropped prediction boxes')
@@ -321,7 +342,35 @@ def parse_opt():
 def main(opt):
     check_requirements(requirements=ROOT / 'requirements.txt', exclude=('tensorboard', 'thop'))
     run(**vars(opt))
+ 
+def count_obj(box, w, h, id, center):
+    y.append(center)
+    mid = int(box[1] + (box[3] - box[1]) / 2)
+    direction =  center - np.mean(y)
+    global countUp, countDown, data, ids
+    data.setdefault(id, False)
+    print(h - h // 6, mid, (h - h // 4), id)
+   
+    if data[id] == False:
+        if direction < 0 and mid > (h // 2) and mid < (h - h // 5)  :
+            if id not in ids:
+                ids.append(id)
+        elif direction > 0 and (h // 2) < mid < (h // 5):
+            if id not in ids:
+                ids.append(id)
 
+        if direction < 0 and mid < (h // 5):
+            if id in ids:
+                countUp += 1
+                data[id] = True
+        elif direction > 0 and mid > (h - h // 5):
+            if id in ids:
+                countDown += 1
+                data[id] = True
+        
+    print(data)
+    print(ids)  
+        
 
 if __name__ == "__main__":
     opt = parse_opt()
